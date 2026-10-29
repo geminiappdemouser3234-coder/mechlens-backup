@@ -6,6 +6,8 @@ In a notebook: %run debugging/activation_cache_repr_probe.py --display
 
 Timings exclude imports, allocation and model execution. Each synthetic cache shares
 one tensor across its keys, so key count and tensor size vary independently.
+Both axes have grouped summaries reporting time ratios; the key-count summary
+also reports representation length as the numbered key names grow.
 Formatting timings exclude notebook transport/browser rendering. --display emits
 one small cache for a manual frontend check; it does not time browser completion.
 """
@@ -190,6 +192,7 @@ def main() -> None:
     print("\nMedian timings; print is captured, and no large representations are emitted.")
     print(f"repr(cache) uses {args.repr_iterations} calls per sample to reduce timer noise.")
     comparisons: dict[int, list[tuple[int, float, str]]] = {}
+    key_comparisons: dict[int, list[tuple[int, float, int]]] = {}
     for elements in args.elements:
         tensor = torch.ones(elements, device=args.device, dtype=torch.float32)
         for keys in args.keys:
@@ -199,6 +202,7 @@ def main() -> None:
             print(f"keys={keys} elements/tensor={elements} shared_storage_bytes={elements * 4}")
             elapsed, text = measure("repr(cache)", lambda: repr(cache), args.repr_iterations)
             comparisons.setdefault(keys, []).append((elements, elapsed, text))
+            key_comparisons.setdefault(elements, []).append((keys, elapsed, len(text)))
             measure("str(cache)", lambda: str(cache))
             measure("print(cache) -> StringIO", lambda: captured_print(cache))
             measure("IPython text/plain(cache)", lambda: format_text(cache))
@@ -222,6 +226,22 @@ def main() -> None:
             )
     if len(set(args.elements)) < 2:
         print("Supply at least two distinct --elements values to compare tensor sizes.")
+
+    print("\nFixed-tensor comparison: only key count changes within each group.")
+    print("All keys share the same tensor; chars tracks the growing key-name output.")
+    print("Ratios are observations, not significance tests; rerun to assess timing noise.")
+    for elements, key_rows in key_comparisons.items():
+        baseline_keys, baseline_ms, baseline_chars = key_rows[0]
+        print(f"elements/tensor={elements}; baseline keys={baseline_keys}")
+        for keys, elapsed, chars in key_rows:
+            ratio = elapsed / baseline_ms if baseline_ms else float("nan")
+            print(
+                f"  keys={keys:10d} repr={elapsed:.6f} ms "
+                f"vs_baseline={ratio:.3f}x chars={chars} "
+                f"chars_vs_baseline={chars / baseline_chars:.3f}x"
+            )
+    if len(set(args.keys)) < 2:
+        print("Supply at least two distinct --keys values to compare key counts.")
 
     if args.display:
         print("Manual frontend check: displaying a small wrapper (not timed).")
